@@ -2,7 +2,7 @@ import {JSDOM} from 'jsdom';import {test,afterEach,beforeEach} from 'node:test';
 const dom=new JSDOM('<!doctype html><html><body></body></html>',{url:'http://localhost/'});
 for(const key of ['window','document','HTMLElement','Element','Node','NodeFilter','DocumentFragment','MutationObserver','HTMLInputElement','HTMLTextAreaElement','HTMLButtonElement','HTMLFormElement','HTMLOptionElement','HTMLSelectElement','Event','MouseEvent','CustomEvent','KeyboardEvent','getComputedStyle','localStorage','sessionStorage','StorageEvent'])Object.defineProperty(globalThis,key,{value:(dom.window as any)[key],configurable:true,writable:true});Object.defineProperty(globalThis,'navigator',{value:dom.window.navigator,configurable:true});(globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
 (globalThis as any).ResizeObserver=class{observe(){}unobserve(){}disconnect(){}};dom.window.HTMLElement.prototype.scrollIntoView=function(){};dom.window.HTMLElement.prototype.hasPointerCapture=()=>false;dom.window.HTMLElement.prototype.setPointerCapture=function(){};dom.window.HTMLElement.prototype.releasePointerCapture=function(){};
-const {render,screen:baseScreen,within,cleanup,waitFor,fireEvent,act}=await import('@testing-library/react');const {default:userEvent}=await import('@testing-library/user-event');const {App}=await import('../src/App');const {seed,transition,KEY,csv}=await import('../src/model');
+const {render,screen:baseScreen,within,cleanup,waitFor,fireEvent,act}=await import('@testing-library/react');const {default:userEvent}=await import('@testing-library/user-event');const {DemoApp:App}=await import('../src/App');const {seed,transition,KEY,csv}=await import('../src/model');
 const screen=new Proxy(baseScreen,{get(target,key){const original=(target as any)[key];if(typeof original!=='function'||!String(key).startsWith('getBy')&&!String(key).startsWith('queryBy'))return original;return (...args:any[])=>{const id=window.location.hash.match(/review\/[^/]+\/([^?]+)/)?.[1];const file=id?document.getElementById(`file-${decodeURIComponent(id)}`):null;if(file){const fn=(within(file) as any)[key];if(fn){try{const result=fn(...args);if(result)return result}catch{}}}return original(...args)}}});
 beforeEach(()=>{localStorage.setItem('patrol-source','examples');sessionStorage.setItem('wikiwatch-demo-session','dev')});afterEach(()=>{cleanup();sessionStorage.clear();localStorage.clear();window.history.replaceState(null,'','/')});
 async function settleGrid(){await act(async()=>{await new Promise(r=>setTimeout(r,40))})}
@@ -71,3 +71,140 @@ test('Route policy allows only the signed-in role and ignores URL account impers
 test('Inactive accounts cannot sign in and removing current access returns to login',async()=>{sessionStorage.clear();const state=seed();state.members=state.members.map(m=>m.id==='dev'?{...m,active:false}:m);localStorage.setItem(KEY,JSON.stringify(state));const user=userEvent.setup();render(<App/>);assert.equal(baseScreen.queryByRole('button',{name:'Use Dev Patel account'}),null);await user.type(baseScreen.getByLabelText('Email',{exact:true}),'dev@example.org');await user.type(baseScreen.getByLabelText('Password',{exact:true}),'demo123');await user.click(baseScreen.getByRole('button',{name:'Sign in',exact:true}));assert.ok(baseScreen.getByRole('alert'));await user.click(baseScreen.getByRole('button',{name:'Use Amir Reza account'}));await user.click(baseScreen.getByRole('button',{name:'Sign in',exact:true}));await settleGrid();assert.equal(sessionStorage.getItem('wikiwatch-demo-session'),'amir');const removed={...state,members:state.members.map(m=>m.id==='amir'?{...m,active:false}:m)};await act(()=>{localStorage.setItem(KEY,JSON.stringify(removed));window.dispatchEvent(new StorageEvent('storage',{key:KEY,newValue:JSON.stringify(removed)}))});assert.ok(baseScreen.getByRole('heading',{name:'Sign in to your workspace'}));assert.match(baseScreen.getByRole('alert').textContent||'',/access changed/);assert.equal(sessionStorage.getItem('wikiwatch-demo-session'),null);assert.equal(document.querySelector('.ag-root-wrapper'),null)});
 
 test('Compact navigation opens allowed pages and exposes guide and developer tools',async()=>{const user=userEvent.setup();render(<App/>);await settleGrid();await user.click(baseScreen.getByRole('button',{name:'Open navigation'}));let dialog=baseScreen.getByRole('dialog',{name:'Workspace navigation'});assert.equal(within(dialog).queryByRole('button',{name:'Members',exact:true}),null);await user.click(within(dialog).getByRole('button',{name:'My Claims',exact:true}));assert.equal(baseScreen.queryByRole('dialog'),null);assert.ok(baseScreen.getByRole('heading',{name:'My Claims',exact:true}));await user.click(baseScreen.getByRole('button',{name:'Open navigation'}));dialog=baseScreen.getByRole('dialog',{name:'Workspace navigation'});await user.click(within(dialog).getByRole('button',{name:'Dev mode',exact:true}));assert.ok(baseScreen.getByRole('dialog',{name:'Dev mode'}));await user.keyboard('{Escape}');await user.click(baseScreen.getByRole('button',{name:'Open navigation'}));dialog=baseScreen.getByRole('dialog',{name:'Workspace navigation'});await user.click(within(dialog).getByRole('button',{name:'Guide',exact:true}));assert.ok(baseScreen.getByRole('dialog',{name:'Workspace guide'}));});
+
+
+test('remote review stays readable while saving and enables actions after admission without reloading content', async () => {
+  const {default: ReviewPage} = await import('../src/ReviewPage');
+  const {backend} = await import('../src/backend');
+  const originalAll = backend.all;
+  backend.all = async () => [];
+  try {
+    const initial = seed();
+    const edit = {...initial.edits[0], source: 'fixture' as const, contentStatus: 'ready' as const};
+    const store = {...initial, edits: [edit], claims: []};
+    let loaded = 0;
+    const props = {edit, store, actor: 'dev', role: 'patroller', act: () => true, offline: false,
+      remote: true, actionsDisabled: true, onBack: () => {}, onLoaded: () => {loaded++;}};
+    const view = render(<ReviewPage {...props}/>);
+    await waitFor(() => assert.equal(loaded, 1));
+    assert.equal((baseScreen.getByRole('button', {name: 'Claim edit'}) as HTMLButtonElement).disabled, true);
+    assert.equal(baseScreen.queryByText('Loading exact revision content…'), null);
+    view.rerender(<ReviewPage {...props} actionsDisabled={false}/>);
+    assert.equal((baseScreen.getByRole('button', {name: 'Claim edit'}) as HTMLButtonElement).disabled, true);
+    const savedEdit = {...edit, backendId: 'saved-id', version: 1};
+    view.rerender(<ReviewPage {...props} actionsDisabled={false} edit={savedEdit} store={{...store, edits: [savedEdit]}}/>);
+    await waitFor(() => assert.equal((baseScreen.getByRole('button', {name: 'Claim edit'}) as HTMLButtonElement).disabled, false));
+    assert.equal(loaded, 1);
+  } finally {
+    backend.all = originalAll;
+  }
+});
+
+
+test('review keeps the same frame and uses a single global loader during content requests', async () => {
+  const {default: ReviewPage} = await import('../src/ReviewPage');
+  const {ApiActivityIndicator} = await import('../src/components/ui/loader');
+  const originalFetch = globalThis.fetch;
+  let complete!: (response: Response) => void;
+  globalThis.fetch = async () => new Promise(resolve => {complete = resolve;});
+  const initial = seed();
+  const edit = {...initial.edits[0], id: 'en:881:882', oldRev: 881, newRev: 882,
+    pageId: 88, source: 'wiki' as const, contentStatus: 'unloaded' as const, before: '', after: ''};
+  const store = {...initial, edits: [edit], claims: []};
+  try {
+    render(<><ApiActivityIndicator/><ReviewPage edit={edit} store={store} actor="dev"
+      role="patroller" act={() => true} offline={false} onBack={() => {}}/></>);
+    const frame = document.getElementById('file-en:881:882');
+    assert.ok(frame);
+    assert.ok(frame.classList.contains('review-file-expanded'));
+    assert.equal(frame.getAttribute('aria-busy'), 'true');
+    assert.equal(baseScreen.queryByText('Loading exact revision content…'), null);
+    await act(async () => {await new Promise(resolve => setTimeout(resolve, 220));});
+    assert.equal(baseScreen.getAllByRole('status', {name: 'Loading API requests'}).length, 1);
+    await act(async () => {
+      complete(Response.json({query: {pages: [{pageid: 88, revisions: [
+        {revid: 881, slots: {main: {content: 'Before text', contentmodel: 'wikitext'}}},
+        {revid: 882, slots: {main: {content: 'After text', contentmodel: 'wikitext'}}},
+      ]}]}}));
+      await new Promise(resolve => setTimeout(resolve, 360));
+    });
+    assert.equal(document.getElementById('file-en:881:882'), frame);
+    assert.equal(frame.getAttribute('aria-busy'), 'false');
+    assert.equal(baseScreen.queryByRole('status', {name: 'Loading API requests'}), null);
+    assert.equal((baseScreen.getByRole('button', {name: 'Claim edit'}) as HTMLButtonElement).disabled, false);
+  } finally {globalThis.fetch = originalFetch;}
+});
+
+
+test('Connected workspace uses refreshed identity and confirmed live claim count without a full-refresh response', async () => {
+  const {RemoteWorkspace} = await import('../src/RemoteWorkspace');
+  const {backend} = await import('../src/backend');
+  Object.defineProperty(globalThis, 'location', {value: window.location, configurable: true});
+  Object.defineProperty(globalThis, 'history', {value: window.history, configurable: true});
+  const old = {me: backend.me, all: backend.all, request: backend.request, transition: backend.transition, fetch: globalThis.fetch};
+  const account = {id:'dev', name:'Old name', email:'dev@example.org', role:'patroller' as const, active:true};
+  let row:any = {id:'saved-edit', wiki:'enwiki', old_rev:10,new_rev:20,page_id:42,title:'Real article',editor:'Editor',comment:'',delta:10,occurred_at:new Date().toISOString(),admitted_at:new Date().toISOString(),version:1,status:'unclaimed',owner_id:null};
+  backend.me = async () => ({...account,name:'Current reviewer'});
+  backend.all = async path => path.startsWith('/edits') ? [row] : path.startsWith('/members') ? [{...account,role:'reviewer'}] : [];
+  backend.request = async path => path.startsWith('/events') ? {items:[],next_cursor:0,has_more:false} : {version:1,viewed_edit_ids:[],board_order:[]};
+  backend.transition = async () => {row={...row,version:2,status:'claimed',owner_id:'dev',claimed_at:new Date().toISOString()};backend.all=async()=>{throw Error('Refresh disconnected')};return row};
+  globalThis.fetch = (async () => ({ok:true,json:async()=>({query:{recentchanges:[],pages:[{pageid:42,revisions:[{revid:10,slots:{main:{content:'Before',contentmodel:'wikitext'}}},{revid:20,slots:{main:{content:'After',contentmodel:'wikitext'}}}]}]}})})) as any;
+  window.history.replaceState(null,'','/#/review/en/en%3A10%3A20?role=patroller&user=dev&from=feed');
+  function Connected(){const [me,setMe]=React.useState(account);return <RemoteWorkspace account={me} updateAccount={setMe} logout={()=>{}}/>}
+  try {
+    render(<Connected/>);
+    await waitFor(()=>assert.ok(baseScreen.getByText('Current reviewer')));
+    await waitFor(()=>assert.equal((baseScreen.getByRole('button',{name:'Claim edit'}) as HTMLButtonElement).disabled,false));
+    assert.equal(baseScreen.getByLabelText('My claim count').textContent,'0');
+    const frame = document.querySelector('.review-file');
+    await userEvent.setup().click(baseScreen.getByRole('button',{name:'Claim edit'}));
+    await waitFor(()=>assert.equal(baseScreen.getByLabelText('My claim count').textContent,'1'));
+    assert.equal(document.querySelector('.review-file'),frame);
+    assert.ok(baseScreen.queryByText('Old name')===null);
+  } finally {cleanup();Object.assign(backend,{me:old.me,all:old.all,request:old.request,transition:old.transition});globalThis.fetch=old.fetch;}
+});
+
+test('Application requires an API instead of silently showing seeded accounts',async()=>{
+  const {App:ConnectedApp}=await import('../src/App');render(<ConnectedApp/>);
+  assert.ok(baseScreen.getByRole('heading',{name:'Connect WikiWatch to the team API'}));
+  assert.equal(baseScreen.queryByText('Dev Patel'),null);
+});
+
+
+test('Burst observations stay bounded while preserving observed edit totals',async()=>{
+  const {observe}=await import('../src/model');
+  const now=Date.now();const template=seed().edits[0];
+  const rows=Array.from({length:15000},(_,i)=>({...template,id:String(i),pageId:i,title:'Page '+i,time:now}));
+  const result=observe([],rows,now);
+  assert.ok(result.length<=10001);
+  assert.equal(result.reduce((total,row)=>total+row.count,0),15000);
+  assert.ok(result.some(row=>row.title==='Other pages (aggregated)'));
+});
+
+
+test('Connected viewed progress uses versioned database preferences and survives re-render', async()=>{
+  const {default:ReviewWorkspace}=await import('../src/ReviewPage');
+  const {backend}=await import('../src/backend');
+  const original={request:backend.request,all:backend.all};
+  let prefs:any={version:1,board_order:['unclaimed','claimed','flagged','returned','reviewed'],viewed_edit_ids:[]};
+  let saved=0;
+  backend.all=async()=>[];
+  backend.request=async(_path,options:any={})=>{
+    if(options.method==='PUT'){assert.equal(options.body.version,prefs.version);prefs={...options.body,version:prefs.version+1};saved++;}
+    return prefs;
+  };
+  const store=seed();const edit={...store.edits[0],source:'wiki' as const,contentStatus:'ready' as const,backendId:'db-edit',version:1};
+  store.edits=[edit];store.claims=[];
+  const props={edit,store,actor:'dev',role:'patroller',act:()=>true,offline:false,onBack:()=>{},remote:true,preferences:prefs};
+  try{
+    const view=render(<ReviewWorkspace {...props}/>);
+    const checkbox=baseScreen.getByRole('checkbox',{name:`Viewed ${edit.title}`}) as HTMLInputElement;
+    await userEvent.setup().click(checkbox);
+    await waitFor(()=>assert.equal(saved,1));
+    assert.deepEqual(prefs.viewed_edit_ids,['db-edit']);
+    assert.equal(checkbox.checked,true);
+    view.rerender(<ReviewWorkspace {...props} preferences={prefs}/>);
+    assert.equal(checkbox.checked,true);
+    assert.equal(localStorage.getItem(`patrol-viewed-v1:dev:${edit.wiki}:${edit.id}`),null);
+  }finally{cleanup();Object.assign(backend,original);}
+});

@@ -1,7 +1,8 @@
+import asyncio
 from datetime import timedelta, timezone
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from app.core.exceptions import AppError
 from app.core.security import digest, new_token, verify_password
@@ -18,6 +19,20 @@ def aware(value):
 
 class AuthService(Service):
     async def issue(self, member):
+        # Serialize session creation for this account across PostgreSQL workers.
+        await self.db.execute(select(Member).where(Member.id == member.id).with_for_update())
+        await self.db.refresh(member)
+        if not member.active:
+            raise AppError(401, "Account disabled")
+        await self.db.execute(
+            delete(Session).where(
+                Session.member_id == member.id,
+                (Session.revoked.is_(True)) | (Session.refresh_expires <= now()),
+            )
+        )
+        await self.capacity(
+            Session, settings.sessions_per_member, "Active sessions", Session.member_id == member.id
+        )
         access, refresh = new_token(), new_token()
         self.db.add(
             Session(
@@ -40,8 +55,10 @@ class AuthService(Service):
 
     async def login(self, body):
         member = await self.db.scalar(select(Member).where(Member.email == str(body.email).lower()))
-        valid = verify_password(
-            body.password.get_secret_value(), member.password_hash if member else None
+        valid = await asyncio.to_thread(
+            verify_password,
+            body.password.get_secret_value(),
+            member.password_hash if member else None,
         )
         if not valid or not member or not member.active:
             raise AppError(401, "Invalid email or password")

@@ -1,3 +1,4 @@
+import asyncio
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -5,6 +6,7 @@ from sqlalchemy import select
 from app.core.enums import Role, Status
 from app.core.exceptions import AppError
 from app.core.security import hash_password
+from app.core.settings import settings
 from app.models import Edit, Member
 from app.services.base import Service
 
@@ -12,13 +14,14 @@ from app.services.base import Service
 class MemberService(Service):
     async def create(self, body):
         self.require(Role.ADMIN)
+        await self.capacity(Member, settings.member_capacity, "Team members")
         member = Member(
             id=str(uuid4()),
             name=body.name.strip(),
             email=str(body.email).lower(),
             role=body.role,
             active=True,
-            password_hash=hash_password(body.password.get_secret_value()),
+            password_hash=await asyncio.to_thread(hash_password, body.password.get_secret_value()),
         )
         if not member.name:
             raise AppError(422, "Name cannot be blank")

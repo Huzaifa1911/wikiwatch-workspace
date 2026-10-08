@@ -1,3 +1,4 @@
+import ThemeToggle from "./ThemeToggle";
 import InstallApp from "./InstallApp";
 import React, { useState } from "react";
 import { Flag, ArrowRight } from "lucide-react";
@@ -34,7 +35,8 @@ export default function Login({
         <CardHeader>
           <div className="flex items-center gap-2 mb-5 font-semibold text-lg">
             <Flag className="h-5 w-5 text-primary" />
-            WikiWatch
+            <span className="mr-auto">WikiWatch</span>
+            <ThemeToggle />
           </div>
           <CardTitle role="heading" aria-level={1}>
             Sign in to your workspace
@@ -108,13 +110,15 @@ export default function Login({
                 }}
               />
             </div>
-            {(error || message) && (
-              <p role="alert" className="text-sm text-destructive">
-                {error || message}
-              </p>
-            )}
-            <Button type="submit" className="w-full" disabled={busy}>
-              {busy ? "Signing in…" : "Sign in"}
+            <div className="min-h-10" aria-live="polite">
+              {(error || message) && (
+                <p role="alert" className="text-sm text-destructive">
+                  {error || message}
+                </p>
+              )}
+            </div>
+            <Button type="submit" className="w-full" disabled={busy} aria-busy={busy}>
+              Sign in
               <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
           </form>

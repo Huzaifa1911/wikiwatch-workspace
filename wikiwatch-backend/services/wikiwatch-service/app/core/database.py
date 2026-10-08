@@ -22,7 +22,15 @@ if "postgresql+asyncpg" in url:
         args["ssl"] = args.pop("sslmode")
     args.pop("channel_binding", None)
     url = urlunsplit(parts._replace(query=urlencode(args)))
-engine = create_async_engine(url, pool_pre_ping=True)
+options = {"pool_pre_ping": True}
+if "postgresql+asyncpg" in url:
+    options.update(
+        pool_size=5,
+        max_overflow=0,
+        pool_timeout=10,
+        connect_args={"server_settings": {"statement_timeout": "15000", "lock_timeout": "10000"}},
+    )
+engine = create_async_engine(url, **options)
 if url.startswith("sqlite"):
 
     @event.listens_for(engine.sync_engine, "connect")

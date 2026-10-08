@@ -64,7 +64,7 @@ const css = readFileSync("dist/style.css", "utf8"),
   js = readFileSync("dist/app.js", "utf8").replaceAll("</script", "<\\/script");
 writeFileSync(
   "dist/Patrol-Desk.html",
-  `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="WikiWatch — interactive frontend assignment mocks for reviewers, team leads and admins."><title>WikiWatch</title>${pwa}<style>${css}</style></head><body><div id="root"></div><script>${js}</script>${registration}</body></html>`,
+  `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="WikiWatch — interactive frontend assignment mocks for reviewers, team leads and admins."><title>WikiWatch</title>${pwa}<script>(()=>{let preference;try{preference=localStorage.getItem("wikiwatch-theme")}catch{}const dark=preference==="dark"||(preference!=="light"&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle("dark",dark);document.documentElement.style.colorScheme=dark?"dark":"light"})();</script><style>${css}</style></head><body><div id="root"></div><script>${js}</script>${registration}</body></html>`,
 );
 
 const html = readFileSync("dist/Patrol-Desk.html", "utf8");

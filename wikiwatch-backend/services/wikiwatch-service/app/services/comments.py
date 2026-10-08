@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from app.core.enums import Role
 from app.core.exceptions import AppError
+from app.core.settings import settings
 from app.models import Comment, Edit, Thread
 from app.schemas.contracts import ThreadResponse
 from app.services.base import Service
@@ -24,9 +25,12 @@ class CommentService(Service):
                     select(Comment)
                     .where(Comment.thread_id == thread.id)
                     .order_by(Comment.created_at, Comment.id)
+                    .limit(settings.comments_per_thread + 1)
                 )
             ).all()
         )
+        if len(comments) > settings.comments_per_thread:
+            raise AppError(409, "This retained thread exceeds the discussion limit. Export or maintain its history before loading it.")
         return ThreadResponse(
             **{
                 key: getattr(thread, key)
@@ -45,6 +49,11 @@ class CommentService(Service):
 
     async def create(self, edit_id, body):
         edit = await self.permitted(edit_id)
+        await self.capacity(Thread, settings.thread_capacity, "Stored threads")
+        await self.capacity(
+            Thread, settings.threads_per_edit, "Threads for this edit", Thread.edit_id == edit_id
+        )
+        await self.capacity(Comment, settings.comment_capacity, "Stored comments")
         anchor = body.anchor
         if (anchor.wiki, anchor.old_rev, anchor.new_rev) != (edit.wiki, edit.old_rev, edit.new_rev):
             raise AppError(422, "Anchor must refer to this edit's fixed revision pair")
@@ -71,6 +80,13 @@ class CommentService(Service):
             raise AppError(404, "Thread not found")
         if thread.resolved:
             raise AppError(409, "Reopen the thread before replying")
+        await self.capacity(Comment, settings.comment_capacity, "Stored comments")
+        await self.capacity(
+            Comment,
+            settings.comments_per_thread,
+            "Comments in this thread",
+            Comment.thread_id == thread_id,
+        )
         # Shared version CAS serializes reply vs resolution.
         if not await self.repo.cas_thread(thread_id, thread.version, False):
             raise AppError(409, "Thread changed. Reload it.")
@@ -80,7 +96,13 @@ class CommentService(Service):
         await self.repo.add(comment)
         await self.record("thread.replied", thread.id, {"edit_id": thread.edit_id})
         await self.db.commit()
-        return comment
+        return {
+            "id": comment.id,
+            "author_id": comment.author_id,
+            "body": comment.body,
+            "created_at": comment.created_at,
+            "thread_version": thread.version,
+        }
 
     async def resolve(self, thread_id, body):
         thread = await self.repo.get(Thread, thread_id)

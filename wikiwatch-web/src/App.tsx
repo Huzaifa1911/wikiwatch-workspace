@@ -1,3 +1,5 @@
+import ThemeToggle from "./ThemeToggle";
+import {MAX_REVIEW_BATCH} from "./reviewOpening";
 import RemoteApp from "./RemoteWorkspace";
 import { API_ENABLED, backend } from "./backend";
 import InstallApp from "./InstallApp";
@@ -62,8 +64,6 @@ import {
   ArrowUpRight,
   Check,
   CheckCircle2,
-  Sun,
-  Moon,
   RotateCcw,
   Download,
   Plus,
@@ -254,7 +254,10 @@ function Empty({ title, text }: { title: string; text: string }) {
   );
 }
 export function App() {
-  if (API_ENABLED) return <RemoteApp />;
+  return API_ENABLED ? <RemoteApp /> : <main className="min-h-screen grid place-items-center p-6"><Card className="p-6 max-w-md"><h1 className="text-xl font-semibold">Connect WikiWatch to the team API</h1><p className="mt-3 text-sm text-muted-foreground">Set WIKIWATCH_API_HOST and rebuild the frontend to sign in and load your team’s data.</p></Card></main>;
+}
+// Isolated fixture workspace for regression tests; the application never falls back to it.
+export function DemoApp() {
   const [accountId, setAccountId] = useState(sessionId),
     [message, setMessage] = useState("");
   const members = (sourceMode() === "wiki" ? loadLive() : load()).members;
@@ -308,7 +311,6 @@ function Workspace({
     [reviewId, setReviewId] = useState<string | null>(
       guardedRoute(account).route.reviewId,
     ),
-    [dark, setDark] = useState(false),
     [toast, setToast] = useState(""),
     [navOpen, setNavOpen] = useState(false),
     [help, setHelp] = useState(false),
@@ -340,9 +342,6 @@ function Workspace({
       setStorageError(true);
     }
   }, [store, mode]);
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-  }, [dark]);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(""), 5000);
@@ -593,6 +592,7 @@ function Workspace({
               </span>
             </span>
           </a>
+          <ThemeToggle />
           <InstallApp className="hidden lg:inline-flex" />
           <Badge variant="outline" className="hidden sm:inline-flex">
             {roleInfo[role].label}
@@ -614,15 +614,6 @@ function Workspace({
           >
             <LogOut className="h-4 w-4 sm:mr-2" />
             <span className="hidden sm:inline">Sign out</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="hidden lg:inline-flex"
-            aria-label={dark ? "Use light theme" : "Use dark theme"}
-            onClick={() => setDark(!dark)}
-          >
-            {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
           <Button
             variant="outline"
@@ -952,9 +943,6 @@ function Workspace({
               }}
             >
               Guide
-            </Button>
-            <Button variant="outline" onClick={() => setDark(!dark)}>
-              {dark ? "Use light theme" : "Use dark theme"}
             </Button>
             <Button
               variant="outline"
@@ -1316,7 +1304,7 @@ export function Feed({
               <div className="flex items-center gap-1">
                 <Button
                   size="sm"
-                  disabled={!chosen.length}
+                  disabled={!chosen.length || chosen.length > MAX_REVIEW_BATCH}
                   variant="outline"
                   onClick={() => {
                     const first =
@@ -2919,7 +2907,7 @@ export function AuditLog({
             aria-label="Search audit log"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search actions, pages or reasons…"
+            placeholder={remote ? "Search recent audit history (up to 1,000 records)…" : "Search actions, pages or reasons…"}
             className="pl-9 bg-card"
           />
         </div>
@@ -2976,7 +2964,7 @@ export function AuditLog({
               return;
             }
             try {
-              const records = await backend.auditExport();
+              const records = await backend.auditExport(filtered.filter(a => !gridIds || gridIds.includes(a.id)).map(a => a.id));
               const ids = new Set(
                 filtered
                   .filter((a) => !gridIds || gridIds.includes(a.id))

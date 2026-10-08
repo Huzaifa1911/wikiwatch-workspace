@@ -1,4 +1,3 @@
-from collections import Counter
 from uuid import uuid4
 
 from sqlalchemy import func, select
@@ -24,6 +23,8 @@ class EditService(Service):
                 select(Edit).where(Edit.wiki == item.wiki, Edit.new_rev == item.new_rev)
             )
             if existing:
+                if existing.archived:
+                    raise AppError(409, "This revision has been archived. Choose another edit.")
                 result.append(EditResponse.model_validate(existing))
                 continue
             if total >= settings.queue_capacity:
@@ -31,6 +32,7 @@ class EditService(Service):
                     409,
                     "Queue capacity reached. Admin must archive old unclaimed or completed edits.",
                 )
+            await self.capacity(Edit, settings.edit_capacity, "Stored edits")
             edit = Edit(
                 id=str(uuid4()),
                 **item.model_dump(),
@@ -139,6 +141,8 @@ class EditService(Service):
     async def archive(self, edit_id, version):
         self.require(Role.ADMIN)
         edit = await self.repo.get(Edit, edit_id)
+        if edit.archived:
+            return edit
         if edit.status not in {Status.UNCLAIMED, Status.OK, Status.VERIFIED_FLAGGED}:
             raise AppError(409, "Unfinished claims cannot be archived")
         if not await self.repo.cas_edit(edit_id, version, {"archived": True}):
@@ -150,32 +154,39 @@ class EditService(Service):
 
     async def board(self):
         self.require(Role.LEAD)
-        counts = Counter(
-            (await self.db.scalars(select(Edit.status).where(Edit.archived.is_(False)))).all()
+        counts = dict(
+            (
+                await self.db.execute(
+                    select(Edit.status, func.count())
+                    .where(Edit.archived.is_(False))
+                    .group_by(Edit.status)
+                )
+            ).all()
         )
         return {
             "counts": {
-                "unclaimed": counts["unclaimed"],
-                "claimed": counts["claimed"],
-                "flagged": counts["flagged"],
-                "returned": counts["returned"],
-                "reviewed": counts["ok"] + counts["verified_flagged"],
+                "unclaimed": counts.get("unclaimed", 0),
+                "claimed": counts.get("claimed", 0),
+                "flagged": counts.get("flagged", 0),
+                "returned": counts.get("returned", 0),
+                "reviewed": counts.get("ok", 0) + counts.get("verified_flagged", 0),
             }
         }
 
     async def workload(self):
         self.require(Role.LEAD)
         members = (await self.db.scalars(select(Member).where(Member.role == Role.REVIEWER))).all()
-        result = []
-        for member in members:
-            counts = Counter(
-                (
-                    await self.db.scalars(
-                        select(Edit.status).where(
-                            Edit.owner_id == member.id, Edit.archived.is_(False)
-                        )
-                    )
-                ).all()
+        grouped = (
+            await self.db.execute(
+                select(Edit.owner_id, Edit.status, func.count())
+                .where(Edit.archived.is_(False), Edit.owner_id.is_not(None))
+                .group_by(Edit.owner_id, Edit.status)
             )
-            result.append({"member": MemberResponse.model_validate(member), "counts": dict(counts)})
-        return result
+        ).all()
+        counts = {}
+        for owner, status, total in grouped:
+            counts.setdefault(owner, {})[status] = total
+        return [
+            {"member": MemberResponse.model_validate(member), "counts": counts.get(member.id, {})}
+            for member in members
+        ]

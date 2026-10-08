@@ -1,3 +1,5 @@
+import ThemeToggle from "./ThemeToggle";
+import {mergeFeedRows} from "./feedState";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   API_HOST,
@@ -20,6 +22,8 @@ import {
 import Login from "./Login";
 import InstallApp from "./InstallApp";
 import ReviewPage from "./ReviewPage";
+import { LoginSkeleton } from "./components/ui/loader";
+import { openReviewImmediately, mergeAdmittedEdits, MAX_REVIEW_BATCH } from "./reviewOpening";
 import { LiveData } from "./LiveData";
 import { guardedRoute, roleTabs } from "./auth";
 import { reviewHash, workspaceHash } from "./routes";
@@ -38,7 +42,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "./components/ui/dialog";
-import { Flag, Menu, LogOut, Sun, Moon, WifiOff } from "lucide-react";
+import { Flag, Menu, LogOut, WifiOff } from "lucide-react";
 const labels = { patroller: "Reviewer", lead: "Team lead", admin: "Admin" };
 const empty = (me: Member): Store => ({
   edits: [],
@@ -94,14 +98,9 @@ export default function RemoteApp() {
     setMessage(reason);
     location.hash = "#/login";
   }
-  if (checking)
-    return (
-      <main className="h-dvh grid place-content-center">
-        <p role="status">Checking your session…</p>
-      </main>
-    );
+  if (checking) return <LoginSkeleton />;
   return account ? (
-    <RemoteWorkspace account={account} logout={logout} />
+    <RemoteWorkspace key={account.id} account={account} updateAccount={setAccount} logout={logout} />
   ) : (
     <Login
       members={[]}
@@ -115,11 +114,13 @@ export default function RemoteApp() {
     />
   );
 }
-function RemoteWorkspace({
+export function RemoteWorkspace({
   account,
   logout,
+  updateAccount,
 }: {
   account: Member;
+  updateAccount: (member: Member) => void;
   logout: (reason?: string) => void;
 }) {
   const [store, setStore] = useState<Store>(() => cached(account)),
@@ -133,7 +134,6 @@ function RemoteWorkspace({
     [offline, setOffline] = useState(!navigator.onLine),
     [devOpen, setDevOpen] = useState(false),
     [navOpen, setNavOpen] = useState(false),
-    [dark, setDark] = useState(false),
     [streamState, setStreamState] = useState("Connecting"),
     [preferences, setPreferences] = useState<any>(null),
     [activityMinutes, setActivityMinutes] = useState(60);
@@ -147,42 +147,56 @@ function RemoteWorkspace({
     inspected = useRef(new Set<string>()),
     admitBuffer = useRef(new Map<string, Edit>());
   const observed = useRef(new Set<string>());
+  const admitting = useRef(false);
+  const admissionVersion = useRef(0);
+  const lastSync = useRef(0);
+  const connectionNotice = useRef("");
+  const activeReviewIds = useRef(new Set<string>());
+  activeReviewIds.current = new Set(route.reviewId ? [route.reviewId, ...batch] : []);
   useEffect(() => {
     const update = (e: Event) => setPreferences((e as CustomEvent).detail);
     window.addEventListener("wikiwatch-preferences-changed", update);
     return () =>
       window.removeEventListener("wikiwatch-preferences-changed", update);
   }, []);
+  const refreshKey = useRef("");
+  const requestedMinutes = useRef(activityMinutes);
+  requestedMinutes.current = activityMinutes;
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const refresh = useCallback(async () => {
-    if (syncing.current) await syncing.current.catch(() => {});
+    while (syncing.current) {
+      if (refreshKey.current === String(activityMinutes)) return syncing.current;
+      await syncing.current.catch(() => {});
+    }
+    if (!mounted.current) return;
+    refreshKey.current = String(activityMinutes);
     const run = (async () => {
+      const snapshotVersion = admissionVersion.current;
       const me = await backend.me();
-      if (me.id !== account.id) return;
+      if (!mounted.current || me.id !== account.id || (backend.tokens && backend.tokens.member.id !== account.id)) return;
       if (!me.active || me.role !== account.role) {
         logout("Your workspace access changed. Sign in again.");
         return;
       }
-      const [rows, members, audit, metrics, prefs, board, workload] =
+      updateAccount(me);
+      const [rows, members, audit, metrics, prefs] =
         await Promise.all([
           backend.all("/edits"),
           backend.all(
             account.role === "patroller" ? "/members/directory" : "/members",
           ),
           account.role === "admin"
-            ? backend.all("/audit")
+            ? backend.all("/audit?newest=true", 1000)
             : Promise.resolve([]),
           account.role === "admin"
             ? backend.request(`/activity?minutes=${activityMinutes}`)
             : Promise.resolve(null),
           backend.request("/preferences/me"),
-          account.role === "lead"
-            ? backend.request("/board")
-            : Promise.resolve(null),
-          account.role === "lead"
-            ? backend.request("/workload")
-            : Promise.resolve(null),
         ]);
-      if (!members.some((m) => m.id === me.id)) members.push(me);
+      // An older refresh must not overwrite an edit just saved in the background.
+      if (!mounted.current || requestedMinutes.current !== activityMinutes || snapshotVersion !== admissionVersion.current) return;
+      if (!members.some((m) => m.id === me.id)) members.push({...me, role: backendRole(me.role)});
       else
         members[members.findIndex((m) => m.id === me.id)] = {
           ...members.find((m) => m.id === me.id),
@@ -190,8 +204,8 @@ function RemoteWorkspace({
           role: backendRole(me.role),
         };
       const shared = serverStore(rows, members, audit);
-      shared.boardCounts = board?.counts;
-      shared.workload = workload;
+      // Counts and workload derive from this same edit snapshot, avoiding
+      // conflicting totals from independently timed API reads.
       setPreferences(prefs);
       setQueue(shared);
       setActivity(
@@ -219,12 +233,16 @@ function RemoteWorkspace({
               .filter(
                 (e) => !e.backendId && !shared.edits.some((s) => s.id === e.id),
               )
-              .slice(0, 200),
+              .filter((e, i) => i < 200 || activeReviewIds.current.has(e.id)),
           ],
           observations: previous.observations,
           arrivals: previous.arrivals,
         };
       });
+      const recoveredNotice = connectionNotice.current;
+      setNotice(previous => previous === recoveredNotice ? "" : previous);
+      connectionNotice.current = "";
+      lastSync.current = Date.now();
       setApiState("Connected");
       window.dispatchEvent(new Event("wikiwatch-team-update"));
     })();
@@ -264,7 +282,7 @@ function RemoteWorkspace({
           cursor.current = page.next_cursor;
           if (!page.has_more) break;
         } while (!stopped);
-        if (changed || apiStatus.current !== "Connected") await refresh();
+        if (changed || apiStatus.current !== "Connected" || Date.now() - lastSync.current >= 30000) await refresh();
         delay = 5000;
       } catch (error) {
         setApiState("Unavailable");
@@ -281,7 +299,12 @@ function RemoteWorkspace({
         if (!stopped) timer = setTimeout(poll, delay);
       }
     };
-    void refresh().catch((error) => setNotice(error.message));
+    void (async () => {
+      const head = await backend.request("/events?latest=true");
+      if (stopped) return;
+      cursor.current = head.next_cursor;
+      await refresh();
+    })().catch((error) => { if (!stopped) { connectionNotice.current = error.message; setNotice(error.message); } });
     timer = setTimeout(poll, 5000);
     const wake = () => {
       clearTimeout(timer);
@@ -306,7 +329,7 @@ function RemoteWorkspace({
         new URLSearchParams(checked.hash.split("?")[1] || "")
           .get("batch")
           ?.split(",")
-          .filter(Boolean) || [],
+          .filter(Boolean).slice(0, MAX_REVIEW_BATCH) || [],
       );
       if (checked.denied) setNotice("This page is not available to your role.");
     };
@@ -324,12 +347,18 @@ function RemoteWorkspace({
     };
   }, []);
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-  }, [dark]);
-  useEffect(() => {
+    const timer = setTimeout(() => {
     try {
-      localStorage.setItem(cacheKey(account), JSON.stringify(store));
+      const retained = store.edits.filter(e => e.backendId).slice(0, 500);
+      const ids = new Set(retained.map(e => e.id));
+      localStorage.setItem(cacheKey(account), JSON.stringify({
+        ...empty(account), members: store.members,
+        edits: retained.map(e => ({...e, before: "", after: "", contentStatus: "unloaded"})),
+        claims: store.claims.filter(c => ids.has(c.editId)),
+      }));
     } catch {}
+    }, 2000);
+    return () => clearTimeout(timer);
   }, [store, account.id]);
   useEffect(() => {
     if (account.role !== "lead") return;
@@ -338,15 +367,25 @@ function RemoteWorkspace({
         document.hidden ||
         offline ||
         pending.current ||
+        admitting.current ||
         !admitBuffer.current.size
       )
         return;
       const edits = [...admitBuffer.current.values()].slice(0, 10);
-      edits.forEach((e) => admitBuffer.current.delete(e.id));
+      admitting.current = true;
       void backend
         .admit(edits)
-        .then(() => refresh())
-        .catch((error) => setNotice(`Queue admission: ${error.message}`));
+        .then((rows) => {
+          edits.forEach(e => admitBuffer.current.delete(e.id));
+          admissionVersion.current++;
+          setStore(previous => mergeAdmittedEdits(previous, rows));
+          setQueue(previous => mergeAdmittedEdits(previous, rows));
+        })
+        .catch((error) => {
+          if (error instanceof ApiError && error.status === 409) admitBuffer.current.clear();
+          setNotice(`Queue admission: ${error.message}`);
+        })
+        .finally(() => { admitting.current = false; });
     }, 30000);
     return () => clearInterval(timer);
   }, [account.role, offline, refresh]);
@@ -355,6 +394,7 @@ function RemoteWorkspace({
     setNavOpen(false);
   }
   async function openReview(edit: Edit, ids: string[] = [edit.id]) {
+    if (ids.length > MAX_REVIEW_BATCH) { setNotice("Choose at most 20 edits for one review batch."); return; }
     if (pending.current) return;
     if (offline || apiState !== "Connected") {
       if (edit.backendId) {
@@ -380,14 +420,23 @@ function RemoteWorkspace({
             (id === edit.id ? edit : undefined),
         )
         .filter(Boolean) as Edit[];
-      const raw = selected.filter((e) => !e.backendId);
-      if (raw.length) await backend.admit(raw);
-      await refresh();
-      location.hash =
-        reviewHash(edit.wiki, edit.id, account.role, account.id, route.tab) +
-        (ids.length > 1 ? "&batch=" + encodeURIComponent(ids.join(",")) : "");
+      setNotice("");
+      await openReviewImmediately(
+        selected,
+        () => {
+          location.hash =
+            reviewHash(edit.wiki, edit.id, account.role, account.id, route.tab) +
+            (ids.length > 1 ? "&batch=" + encodeURIComponent(ids.join(",")) : "");
+        },
+        (edits) => backend.admit(edits),
+        (rows) => {
+          admissionVersion.current++;
+          setStore((previous) => mergeAdmittedEdits(previous, rows));
+          setQueue((previous) => mergeAdmittedEdits(previous, rows));
+        },
+      );
     } catch (error) {
-      setNotice((error as Error).message);
+      setNotice("Could not save this edit to the team queue: " + (error as Error).message);
     } finally {
       pending.current = false;
       setBusy(false);
@@ -429,7 +478,10 @@ function RemoteWorkspace({
       else if (action.type !== "event") {
         const edit = current.current.edits.find((e) => e.id === action.editId);
         if (!edit) throw Error("Edit is unavailable. Reload the queue.");
-        await backend.transition(edit, action);
+        const row = await backend.transition(edit, action);
+        admissionVersion.current++;
+        setStore(previous => mergeAdmittedEdits(previous, [row]));
+        setQueue(previous => mergeAdmittedEdits(previous, [row]));
       }
       setNotice("Changes saved to the team database.");
       await refresh().catch((error) =>
@@ -472,16 +524,7 @@ function RemoteWorkspace({
         observed.current = new Set([...observed.current].slice(-50000));
       return {
         ...s,
-        edits: [
-          ...s.edits.filter((e) => e.backendId),
-          ...incoming.filter((e) => !e.backendId),
-          ...s.edits.filter(
-            (e) => !e.backendId && !incoming.some((x) => x.id === e.id),
-          ),
-        ].slice(
-          0,
-          Math.max(200, s.edits.filter((e) => e.backendId).length + 200),
-        ),
+        edits: mergeFeedRows(s.edits, incoming, activeReviewIds.current),
         observations: count ? observe(s.observations, fresh) : s.observations,
         arrivals: (s.arrivals || 0) + (count ? fresh.length : 0),
       };
@@ -511,6 +554,7 @@ function RemoteWorkspace({
           onClick={() => navigate(tab)}
         >
           {tab}
+          {tab === "My Claims" && <span className="ml-auto min-w-6 text-right tabular-nums" aria-label="My claim count">{apiState === "Connecting" ? "—" : queue.claims.filter(c => c.owner === account.id).length}</span>}
         </Button>
       ))}
     </nav>
@@ -529,6 +573,7 @@ function RemoteWorkspace({
           <span className="text-xs text-muted-foreground hidden sm:inline">
             {labels[account.role]}
           </span>
+          <ThemeToggle />
           <InstallApp className="hidden lg:inline-flex" />
           <Button
             className="lg:hidden"
@@ -540,21 +585,13 @@ function RemoteWorkspace({
             <Menu className="h-5 w-5" />
           </Button>
           <Button
-            variant="ghost"
-            size="icon"
-            aria-label={dark ? "Use light theme" : "Use dark theme"}
-            onClick={() => setDark(!dark)}
-          >
-            {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </Button>
-          <Button
             variant="outline"
             size="sm"
             onClick={() => logout()}
             aria-label="Sign out"
           >
-            <LogOut className="h-4 w-4 mr-2" />
-            Sign out
+            <LogOut className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Sign out</span>
           </Button>
         </div>
       </header>
@@ -591,7 +628,7 @@ function RemoteWorkspace({
               </div>
               <div className="flex gap-2">
                 <span className="text-xs text-muted-foreground">
-                  {busy ? "Saving…" : apiState}
+                  {apiState}
                 </span>
                 <Button
                   variant="ghost"
@@ -611,6 +648,7 @@ function RemoteWorkspace({
             </p>
           )}
           <LiveData
+            shared
             enabled={account.role !== "admin"}
             offline={offline}
             open={devOpen}
@@ -648,6 +686,17 @@ function RemoteWorkspace({
               </div>
             }
           />
+          {route.reviewId && review && !review.backendId && !busy && (
+            <div role="status" className="border rounded-lg p-3 text-sm mb-3">
+              This edit has not been saved. Save it before claiming or commenting.
+              {!busy && !offline && apiState === "Connected" && (
+                <Button variant="outline" size="sm" className="ml-2"
+                  onClick={() => void openReview(review, batch.length ? batch : [review.id])}>
+                  Retry saving
+                </Button>
+              )}
+            </div>
+          )}
           <div
             className={`workspace-panel ${route.reviewId ? "review-panel" : route.tab === "Live feed" ? "feed-panel" : route.tab === "Claim Board" ? "board-panel" : ["Workload", "Edit Activity"].includes(route.tab) ? "dashboard-panel" : "table-panel"}`}
             data-workspace-scroll={route.reviewId ? "true" : undefined}
@@ -661,20 +710,24 @@ function RemoteWorkspace({
                   actor={account.id}
                   role={account.role}
                   act={act}
-                  offline={blocked}
+                  offline={offline || apiState !== "Connected"}
+                  actionsDisabled={busy}
                   batchIds={batch.length ? batch : undefined}
                   onLoaded={(id, edit) => {
                     inspected.current.add(id);
                     if (edit)
                       setStore((previous) => ({
                         ...previous,
-                        edits: previous.edits.map((e) =>
-                          e.id === id
+                        edits: previous.edits.map((e, index) =>
+                          e.id !== id && !activeReviewIds.current.has(e.id) && index >= 30
+                            ? {...e, before: "", after: "", contentStatus: "unloaded" as const}
+                            : e.id === id
                             ? {
                                 ...e,
                                 before: edit.before,
                                 after: edit.after,
                                 contentStatus: "ready",
+                                pageId: edit.pageId ?? e.pageId,
                               }
                             : e,
                         ),

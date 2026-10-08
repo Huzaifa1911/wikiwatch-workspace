@@ -4,7 +4,7 @@ export type Claim={editId:string,owner:string,outcome:'claimed'|'ok'|'flagged'|'
 export type Audit={id:string,time:number,actor:string,action:string,target:string,detail:string,wiki?:string,editId?:string,oldRev?:number,newRev?:number};
 export type Store={boardCounts?:Record<string,number>,workload?:any[],edits:Edit[],claims:Claim[],members:Member[],audit:Audit[],observations?:Observation[],arrivals?:number,observationStart?:number,gaps?:{start:number,end?:number}[]};
 export type Observation={key:string,wiki:string,title:string,time:number,count:number};
-export function observe(items:Observation[]=[],edits:Edit[],now=Date.now()){const m=new Map(items.filter(o=>o.time>=now-3600000).map(o=>[o.key,{...o}]));for(const e of edits){const time=Math.floor(e.time/60000)*60000;if(time<now-3600000)continue;const key=`${time}:${e.wiki}:${e.pageId??e.title}`;const o=m.get(key);if(o)o.count++;else m.set(key,{key,wiki:e.wiki,title:e.title,time,count:1})}return [...m.values()];}
+export function observe(items:Observation[]=[],edits:Edit[],now=Date.now()){const m=new Map(items.filter(o=>o.time>=now-3600000).map(o=>[o.key,{...o}]));for(const e of edits){const time=Math.floor(e.time/60000)*60000;if(time<now-3600000)continue;const pageKey=`${time}:${e.wiki}:${e.pageId??e.title}`;const grouped=!m.has(pageKey)&&m.size>=10000;const key=grouped?`${time}:${e.wiki}:overflow`:pageKey;const o=m.get(key);if(o)o.count++;else m.set(key,{key,wiki:e.wiki,title:grouped?'Other pages (aggregated)':e.title,time,count:1})}return [...m.values()];}
 
 export const KEY='patrol-desk-shadcn-v1';
 const examples=[

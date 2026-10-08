@@ -13,7 +13,7 @@ class LoginRequest(RequestSchema):
 
 
 class RefreshRequest(RequestSchema):
-    refresh_token: SecretStr
+    refresh_token: SecretStr = Field(min_length=1, max_length=200)
 
 
 class MemberResponse(ORMResponse):
@@ -56,12 +56,12 @@ class EditInput(RequestSchema):
     title: str = Field(min_length=1, max_length=500)
     editor: str = Field(min_length=1, max_length=255)
     comment: str = Field(default="", max_length=5000)
-    old_rev: int = Field(ge=0)
-    new_rev: int = Field(gt=0)
-    page_id: int = Field(gt=0)
-    namespace: int = 0
+    old_rev: int = Field(ge=0, le=9223372036854775807)
+    new_rev: int = Field(gt=0, le=9223372036854775807)
+    page_id: int = Field(gt=0, le=9223372036854775807)
+    namespace: int = Field(default=0, ge=0, le=2147483647)
     bot: bool = False
-    delta: int = 0
+    delta: int = Field(default=0, ge=-2147483647, le=2147483647)
     occurred_at: datetime
 
     @field_validator("occurred_at")
@@ -98,8 +98,8 @@ class TransitionRequest(VersionRequest):
 
 class Anchor(RequestSchema):
     wiki: str
-    old_rev: int = Field(ge=0)
-    new_rev: int = Field(gt=0)
+    old_rev: int = Field(ge=0, le=9223372036854775807)
+    new_rev: int = Field(gt=0, le=9223372036854775807)
     side: Literal["old", "new"]
     start_line: int = Field(ge=1)
     end_line: int = Field(ge=1)
@@ -153,6 +153,10 @@ class CommentResponse(ORMResponse):
     created_at: datetime
 
 
+class ReplyResponse(CommentResponse):
+    thread_version: int
+
+
 class ThreadResponse(ORMResponse):
     id: str
     edit_id: str
@@ -195,6 +199,13 @@ class PreferenceRequest(VersionRequest):
         default_factory=lambda: ["unclaimed", "claimed", "flagged", "returned", "reviewed"]
     )
     viewed_edit_ids: list[str] = Field(default_factory=list, max_length=1000)
+
+    @field_validator("viewed_edit_ids")
+    @classmethod
+    def bounded_ids(cls, value):
+        if any(len(item) > 36 for item in value):
+            raise ValueError("Viewed edit identifiers must be at most 36 characters")
+        return list(dict.fromkeys(value))
 
     @field_validator("board_order")
     @classmethod

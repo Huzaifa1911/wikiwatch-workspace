@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy import update
 
 from app.core.database import get_db
 from app.dependencies import current_member, identity
+from app.models import Session
 from app.schemas.base import SuccessResponse
 from app.schemas.contracts import (
     LoginRequest,
@@ -36,7 +38,7 @@ async def refresh(body: RefreshRequest, db=Depends(get_db)):
     "/logout", response_model=SuccessResponse[LogoutResponse], summary="Revoke the current session"
 )
 async def logout(result=Depends(identity), db=Depends(get_db)):
-    result[1].revoked = True
+    await db.execute(update(Session).where(Session.id == result[1].id).values(revoked=True))
     await db.commit()
     return {"data": {"logged_out": True}}
 

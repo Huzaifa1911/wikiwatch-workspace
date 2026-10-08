@@ -1,14 +1,15 @@
 import csv
 import io
-from collections import Counter
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import Response
-from sqlalchemy import select
+from fastapi.responses import Response, StreamingResponse
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.database import get_db
 from app.core.enums import Role
+from app.core.exceptions import AppError
 from app.dependencies import current_member
 from app.models import Audit, Edit, Event
 from app.models.entities import now
@@ -28,9 +29,18 @@ router = APIRouter(tags=["Reporting and synchronization"])
 async def events(
     after: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
+    latest: bool = False,
     actor=Depends(current_member),
     db=Depends(get_db),
 ):
+    if latest:
+        return {
+            "data": {
+                "items": [],
+                "next_cursor": await db.scalar(select(func.max(Event.id))) or 0,
+                "has_more": False,
+            }
+        }
     rows = list(
         (
             await db.scalars(
@@ -51,6 +61,7 @@ async def events(
     summary="Search the append-only audit log (admin)",
 )
 async def audit(
+    newest: bool = False,
     action: str | None = None,
     actor_id: str | None = None,
     q: str | None = Query(None, max_length=200),
@@ -71,6 +82,16 @@ async def audit(
             Audit.target.contains(q, autoescape=True) | Audit.action.contains(q, autoescape=True)
         )
     rows, total = await service.repo.page(Audit, conditions, offset, limit)
+    if newest:
+        rows = (
+            await db.scalars(
+                select(Audit)
+                .where(*conditions)
+                .order_by(Audit.id.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+        ).all()
     return {"data": {"items": rows, "total": total, "offset": offset, "limit": limit}}
 
 
@@ -87,15 +108,24 @@ async def audit(
     description="Use after_id to export batches of at most 10,000 records. No passwords, tokens, or comment bodies are included in audit details.",
 )
 async def export(
+    ids: str | None = Query(None, max_length=10000),
     after_id: int = Query(0, ge=0),
     limit: int = Query(1000, ge=1, le=10000),
     actor=Depends(current_member),
     db=Depends(get_db),
 ):
     Service(db, actor).require(Role.ADMIN)
-    rows = (
-        await db.scalars(select(Audit).where(Audit.id > after_id).order_by(Audit.id).limit(limit))
-    ).all()
+    query = select(Audit).where(Audit.id > after_id)
+    if ids is not None:
+        values = ids.split(",")
+        if len(values) > 1000 or any(not value.isdigit() or len(value) > 18 for value in values):
+            raise AppError(422, "Export accepts at most 1000 numeric audit identifiers")
+        query = query.where(Audit.id.in_([int(value) for value in values]))
+    # Audit records are immutable. Bound this download to the records present
+    # at its start, and release the authentication/read connection before streaming.
+    last_id = await db.scalar(query.with_only_columns(func.max(Audit.id))) or after_id
+    sessions = async_sessionmaker(db.bind, expire_on_commit=False)
+    await db.rollback()
 
     def safe(value):
         text = str(value)
@@ -105,25 +135,47 @@ async def export(
             else text
         )
 
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["id", "time", "actor_id", "action", "target", "detail"])
-    for row in rows:
-        writer.writerow(
-            [
-                safe(value)
-                for value in [
-                    row.id,
-                    row.created_at.isoformat(),
-                    row.actor_id,
-                    row.action,
-                    row.target,
-                    row.detail,
-                ]
-            ]
-        )
-    return Response(
-        output.getvalue(),
+    async def chunks():
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["id", "time", "actor_id", "action", "target", "detail"])
+        yield output.getvalue().encode("utf-8")
+        cursor, remaining = after_id, limit
+        while remaining and cursor < last_id:
+            # Release each connection before waiting for a slow download client.
+            async with sessions() as session:
+                rows = (
+                    await session.scalars(
+                        query.where(Audit.id > cursor, Audit.id <= last_id)
+                        .order_by(Audit.id)
+                        .limit(min(100, remaining))
+                    )
+                ).all()
+            if not rows:
+                break
+            output.seek(0)
+            output.truncate(0)
+            for row in rows:
+                writer.writerow(
+                    [
+                        safe(value)
+                        for value in [
+                            row.id,
+                            row.created_at.isoformat(),
+                            row.actor_id,
+                            row.action,
+                            row.target,
+                            row.detail,
+                        ]
+                    ]
+                )
+            cursor = rows[-1].id
+            remaining -= len(rows)
+            del rows
+            yield output.getvalue().encode("utf-8")
+
+    return StreamingResponse(
+        chunks(),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=wikiwatch-audit.csv"},
     )
@@ -139,26 +191,51 @@ async def activity(
     minutes: int = Query(60, ge=1, le=1440), actor=Depends(current_member), db=Depends(get_db)
 ):
     Service(db, actor).require(Role.ADMIN)
-    rows = (
-        await db.scalars(select(Edit).where(Edit.occurred_at >= now() - timedelta(minutes=minutes)))
-    ).all()
-    points = {}
-    for row in rows:
-        key = (row.occurred_at.strftime("%Y-%m-%dT%H:%M:00Z"), row.wiki)
-        point = points.setdefault(
-            key, {"minute": key[0], "wiki": key[1], "edits": 0, "bytes_changed": 0}
+    cutoff = now() - timedelta(minutes=minutes)
+    condition = Edit.occurred_at >= cutoff
+    # Aggregate in the database; never materialize every article into server memory.
+    minute = (
+        func.date_trunc("minute", Edit.occurred_at)
+        if db.bind.dialect.name == "postgresql"
+        else func.strftime("%Y-%m-%dT%H:%M:00Z", Edit.occurred_at)
+    )
+    grouped = (
+        await db.execute(
+            select(minute.label("minute"), Edit.wiki, func.count(), func.sum(func.abs(Edit.delta)))
+            .where(condition)
+            .group_by(minute, Edit.wiki)
+            .order_by(minute, Edit.wiki)
         )
-        point["edits"] += 1
-        point["bytes_changed"] += abs(row.delta)
-    pages = Counter((row.wiki, row.title) for row in rows)
+    ).all()
+    statuses = (
+        await db.execute(select(Edit.status, func.count()).where(condition).group_by(Edit.status))
+    ).all()
+    pages = (
+        await db.execute(
+            select(Edit.wiki, Edit.title, func.count().label("total"))
+            .where(condition)
+            .group_by(Edit.wiki, Edit.title)
+            .order_by(func.count().desc(), Edit.wiki, Edit.title)
+            .limit(10)
+        )
+    ).all()
     return {
         "data": {
-            "total": len(rows),
-            "points": [points[key] for key in sorted(points)],
-            "by_status": dict(Counter(row.status for row in rows)),
+            "total": sum(count for _, count in statuses),
+            "points": [
+                {
+                    "minute": value
+                    if isinstance(value, str)
+                    else value.strftime("%Y-%m-%dT%H:%M:00Z"),
+                    "wiki": wiki,
+                    "edits": count,
+                    "bytes_changed": changed or 0,
+                }
+                for value, wiki, count, changed in grouped
+            ],
+            "by_status": dict(statuses),
             "top_pages": [
-                {"wiki": key[0], "title": key[1], "edits": count}
-                for key, count in pages.most_common(10)
+                {"wiki": wiki, "title": title, "edits": count} for wiki, title, count in pages
             ],
         }
     }

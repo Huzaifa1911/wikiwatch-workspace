@@ -1,3 +1,4 @@
+import {MAX_REVIEW_BATCH} from "./reviewOpening";
 import { backend, API_HOST, apiAnchor, threadFromAPI } from "./backend";
 import React, { useState, useRef } from "react";
 import { Button } from "./components/ui/button";
@@ -29,6 +30,7 @@ import {
   type Comment,
 } from "./annotations";
 import { revisionPair } from "./wiki";
+import { ReviewSkeleton } from "./components/ui/loader";
 import type { Store, Edit, Action } from "./model";
 type Props = {
   edit: Edit;
@@ -37,6 +39,7 @@ type Props = {
   role: string;
   act: (a: Action) => boolean | Promise<boolean>;
   offline: boolean;
+  actionsDisabled?: boolean;
   onBack: () => void;
   batchIds?: string[];
   onLoaded?: (id: string, edit?: Edit) => void;
@@ -74,7 +77,7 @@ function loadComments(key: string): Comment[] {
   }
 }
 export default function ReviewWorkspace(props: Props) {
-  const { edit, store, role, onBack } = props;
+  const { edit, store, role, onBack, remote } = props;
   const [ids] = useState<string[]>(
     () =>
       props.batchIds ||
@@ -105,7 +108,7 @@ export default function ReviewWorkspace(props: Props) {
       });
     });
   }
-  const files = ids
+  const files = ids.slice(0, MAX_REVIEW_BATCH)
     .map((id) => store.edits.find((e) => e.id === id))
     .filter(Boolean) as Edit[];
   React.useEffect(() => {
@@ -131,6 +134,7 @@ export default function ReviewWorkspace(props: Props) {
       <Button variant="outline" onClick={onBack}>
         ← Back to {role === "lead" ? "claim board" : "workspace"}
       </Button>
+      {ids.length > MAX_REVIEW_BATCH && <p role="alert">This batch is limited to 20 edits. Review the remaining edits from the feed.</p>}
       <div className="flex gap-3 items-center">
         <div className="bg-muted border rounded-lg p-3">
           <FileText className="h-5 w-5" />
@@ -140,7 +144,7 @@ export default function ReviewWorkspace(props: Props) {
           <p className="text-xs text-muted-foreground">
             {files.length} independent edits ·{" "}
             {files.length > 1 ? "Selected review batch" : "Single edit"} · Notes
-            stored in this browser
+            {remote ? "saved in the team database" : "stored in this browser"}
           </p>
         </div>
       </div>
@@ -232,15 +236,16 @@ function LoadedReview(
 ) {
   const [edit, setEdit] = useState(props.edit),
     [status, setStatus] = useState(
-      props.edit.source === "wiki" ? "loading" : "ready",
+      props.edit.source === "wiki" && props.edit.contentStatus !== "ready" ? "loading" : "ready",
     ),
     [failure, setFailure] = useState(""),
     [retry, setRetry] = useState(0);
   React.useEffect(() => {
     const c = new AbortController();
-    if (props.offline && props.edit.contentStatus === "ready") {
+    if (props.edit.contentStatus === "ready") {
       setEdit(props.edit);
       setStatus("ready");
+      props.onLoaded?.(props.edit.id, props.edit);
       return;
     }
     setStatus(props.edit.source === "wiki" ? "loading" : "ready");
@@ -260,37 +265,13 @@ function LoadedReview(
       });
     return () => c.abort();
   }, [props.edit.id, retry, props.offline]);
-  if (status === "ready") return <ReviewFile {...props} edit={edit} />;
-  return (
-    <section
-      id={`file-${props.edit.id}`}
-      aria-label={`Changed page ${props.edit.id}`}
-      className="border rounded-lg p-5 space-y-3"
-    >
-      <h3>{props.edit.title}</h3>
-      <p className="text-xs font-mono">
-        {props.edit.wiki} · {props.edit.oldRev || "Empty page"} →{" "}
-        {props.edit.newRev}
-      </p>
-      {status === "loading" ? (
-        <p role="status">Loading exact revision content…</p>
-      ) : (
-        <>
-          <p role="alert">
-            {failure} This edit cannot be reviewed until its content is
-            available.
-          </p>
-          <Button
-            data-file-toggle
-            variant="outline"
-            onClick={() => setRetry((x) => x + 1)}
-          >
-            Retry content
-          </Button>
-        </>
-      )}
-    </section>
-  );
+  return <ReviewFile {...props}
+    offline={props.offline || !!props.actionsDisabled || status !== "ready" || (!!props.remote && !props.edit.backendId)}
+    contentLoading={status === "loading"}
+    contentError={status === "unavailable" ? failure : undefined}
+    onRetryContent={() => setRetry(x => x + 1)}
+    edit={{...edit, ...props.edit, before: edit.before, after: edit.after, contentStatus: edit.contentStatus}} />;
+
 }
 function ReviewFile({
   edit,
@@ -303,7 +284,11 @@ function ReviewFile({
   primary,
   remote = false,
   preferences,
-}: Props & { onAdvance: () => void; primary: boolean }) {
+  contentLoading = false,
+  contentError,
+  onRetryContent,
+}: Props & { onAdvance: () => void; primary: boolean; contentLoading?: boolean;
+  contentError?: string; onRetryContent?: () => void }) {
   const key = remote
       ? `wikiwatch-comments:${API_HOST}:${actor}:${edit.backendId}`
       : `patrol-comments-v2:${edit.wiki}:${edit.id}`,
@@ -380,16 +365,25 @@ function ReviewFile({
     return () => window.removeEventListener("reveal-review-page", reveal);
   }, [edit.id]);
   const [commentBusy, setCommentBusy] = useState(false),
-    [loadingComments, setLoadingComments] = useState(remote);
+    [loadingComments, setLoadingComments] = useState(false);
   const saving = useRef(false);
+  const commentGeneration = useRef(0);
+  const commentRead = useRef(0);
+  const viewedSaving = useRef(false);
   React.useEffect(() => {
-    if (!remote || !edit.backendId) return;
+    if (remote && !viewedSaving.current) setViewed(!!preferences?.viewed_edit_ids?.includes(edit.backendId));
+  }, [remote, preferences, edit.backendId]);
+  React.useEffect(() => {
+    if (!remote || !edit.backendId || contentLoading || contentError) return;
+    setLoadingComments(true);
     let mounted = true;
     async function reload() {
       if (saving.current) return;
       try {
+        const generation = commentGeneration.current;
+        const read = ++commentRead.current;
         const rows = await backend.all(`/edits/${edit.backendId}/threads`);
-        if (mounted) {
+        if (mounted && !saving.current && generation === commentGeneration.current && read === commentRead.current) {
           const comments = rows.map((row) => threadFromAPI(edit, row));
           setComments(comments);
           try {
@@ -410,7 +404,7 @@ function ReviewFile({
       mounted = false;
       window.removeEventListener("wikiwatch-team-update", reload);
     };
-  }, [remote, edit.backendId]);
+  }, [remote, edit.backendId, contentLoading, contentError]);
   async function save(next: Comment[]) {
     if (!permitted || (remote && offline) || saving.current) {
       setError(
@@ -421,6 +415,7 @@ function ReviewFile({
       return false;
     }
     saving.current = true;
+    commentGeneration.current++;
     setCommentBusy(true);
     try {
       let confirmed = next;
@@ -478,7 +473,7 @@ function ReviewFile({
               c.id === changed.id
                 ? {
                     ...c,
-                    version: ((old as any).version || 1) + 1,
+                    version: row.thread_version,
                     replies: c.replies.map((r) =>
                       r.id === reply.id
                         ? { id: row.id, author: row.author_id, body: row.body }
@@ -893,7 +888,8 @@ function ReviewFile({
       }}
       ref={scope}
       id={`file-${edit.id}`}
-      className="rounded-lg border bg-card scroll-mt-24"
+      className={`rounded-lg border bg-card scroll-mt-24 ${open ? "review-file-expanded" : ""}`}
+      aria-busy={contentLoading || loadingComments || commentBusy}
       aria-label={`Changed page ${edit.id}`}
     >
       <header className="flex gap-3 items-center px-4 py-3 bg-muted/40 border-b flex-wrap">
@@ -933,16 +929,25 @@ function ReviewFile({
             type="checkbox"
             aria-label={`Viewed ${edit.title}`}
             checked={viewed}
-            onChange={(e) => {
+            disabled={remote && (offline || !edit.backendId || !preferences || commentBusy)}
+            onChange={async (e) => {
               const checked = e.target.checked;
+              if (viewedSaving.current) return;
+              viewedSaving.current = true;
               try {
-                localStorage.setItem(progressKey, String(checked));
+                if (remote) {
+                  const latest = await backend.request("/preferences/me");
+                  const ids = latest.viewed_edit_ids.filter((id: string) => id !== edit.backendId);
+                  if (checked) ids.push(edit.backendId);
+                  const saved = await backend.request("/preferences/me", {method: "PUT", body: {...latest, viewed_edit_ids: ids.slice(-1000)}});
+                  window.dispatchEvent(new CustomEvent("wikiwatch-preferences-changed", {detail: saved}));
+                } else localStorage.setItem(progressKey, String(checked));
                 setViewed(checked);
                 setOpen(!checked);
                 if (checked) onAdvance();
-              } catch {
-                setError("Viewed progress could not be saved.");
-              }
+              } catch (error) {
+                setError("Viewed progress could not be saved: " + (error as Error).message);
+              } finally { viewedSaving.current = false; }
             }}
           />
           {viewed ? (
@@ -951,11 +956,6 @@ function ReviewFile({
           Viewed
         </label>
       </header>
-      {(loadingComments || commentBusy) && (
-        <p role="status" className="px-4 py-2 text-xs text-muted-foreground">
-          {commentBusy ? "Saving comment…" : "Loading team comments…"}
-        </p>
-      )}
       {error && (
         <p role="alert" className="px-4 py-2 text-sm text-destructive">
           {error}
@@ -1047,7 +1047,13 @@ function ReviewFile({
               </nav>
             )}
           </div>
-          <DiffViewer
+          <div className="review-diff-slot">
+          {contentLoading ? <ReviewSkeleton /> : contentError ? (
+            <div className="review-content-placeholder flex flex-col items-start justify-center gap-3">
+              <p role="alert">{contentError} This edit cannot be reviewed until its content is available.</p>
+              <Button data-file-toggle variant="outline" onClick={onRetryContent}>Retry content</Button>
+            </div>
+          ) : <DiffViewer
             edit={edit}
             anchors={active}
             onAnchor={(a) => {
@@ -1069,7 +1075,8 @@ function ReviewFile({
                 {anchor && matches(anchor, r) && composer()}
               </>
             )}
-          />
+          />}
+          </div>
           {comments.filter(
             (c) => !validAnchor(c.anchor, sources[c.anchor.side], edit.id),
           ).length > 0 && (

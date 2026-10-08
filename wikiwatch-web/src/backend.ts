@@ -1,4 +1,6 @@
 import type { Edit, Member, Store, Action } from "./model";
+import { resolveAdmissionEdits } from "./wiki";
+import { withApiActivity } from "./apiActivity";
 import { makeAnchor, type Anchor, type Comment } from "./annotations";
 declare const __API_HOST__: string;
 export const API_HOST = typeof __API_HOST__ === "undefined" ? "" : __API_HOST__;
@@ -91,38 +93,45 @@ class Backend {
       auth?: boolean;
     } = {},
   ): Promise<any> {
-    const headers: Record<string, string> = { Accept: "application/json" };
-    if (body !== undefined) headers["Content-Type"] = "application/json";
-    if (auth && this.tokens)
-      headers.Authorization = `Bearer ${this.tokens.access_token}`;
-    const response = await fetch(API_HOST + "/wikiwatch-service/v1" + path, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal,
-      cache: "no-store",
-      credentials: "omit",
+    return withApiActivity(async () => {
+      const requestSession = this.tokens;
+      const headers: Record<string, string> = { Accept: "application/json" };
+      if (body !== undefined) headers["Content-Type"] = "application/json";
+      if (auth && this.tokens)
+        headers.Authorization = `Bearer ${this.tokens.access_token}`;
+      const timeout = AbortSignal.timeout(20000);
+      const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+      const response = await fetch(API_HOST + "/wikiwatch-service/v1" + path, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: requestSignal,
+        cache: "no-store",
+        credentials: "omit",
+      });
+      if (auth && requestSession && requestSession.member?.id !== this.tokens?.member?.id)
+        throw new ApiError(401, "The session changed. Sign in again.");
+      if (response.status === 401 && auth && retry && this.tokens) {
+        await this.refresh();
+        return this.request(path, { method, body, signal, retry: false, auth });
+      }
+      if (
+        response.ok &&
+        response.headers.get("content-type")?.includes("text/csv")
+      )
+        return await response.text();
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok)
+        throw new ApiError(
+          response.status,
+          payload.error ||
+            (Array.isArray(payload.detail)
+              ? payload.detail.map((d: any) => d.msg).join("; ")
+              : payload.detail) ||
+            `API returned HTTP ${response.status}.`,
+        );
+      return payload.data;
     });
-    if (response.status === 401 && auth && retry && this.tokens) {
-      await this.refresh();
-      return this.request(path, { method, body, signal, retry: false, auth });
-    }
-    if (
-      response.ok &&
-      response.headers.get("content-type")?.includes("text/csv")
-    )
-      return response.text();
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok)
-      throw new ApiError(
-        response.status,
-        payload.error ||
-          (Array.isArray(payload.detail)
-            ? payload.detail.map((d: any) => d.msg).join("; ")
-            : payload.detail) ||
-          `API returned HTTP ${response.status}.`,
-      );
-    return payload.data;
   }
   async refresh() {
     if (!this.refreshing) {
@@ -167,26 +176,27 @@ class Backend {
     const session = this.tokens;
     this.save(null);
     if (session)
-      await fetch(API_HOST + "/wikiwatch-service/v1/auth/logout", {
+      await withApiActivity(() => fetch(API_HOST + "/wikiwatch-service/v1/auth/logout", {
         method: "POST",
         headers: { Authorization: `Bearer ${session.access_token}` },
         credentials: "omit",
         cache: "no-store",
-      });
+      }));
   }
-  async all(path: string) {
+  async all(path: string, maximum = 10000) {
     let rows: any[] = [];
     let offset = 0;
     for (;;) {
       const page = await this.request(
-        `${path}${path.includes("?") ? "&" : "?"}offset=${offset}&limit=100`,
+        `${path}${path.includes("?") ? "&" : "?"}offset=${offset}&limit=${Math.min(path.includes("/threads") ? 5 : 100, maximum - offset)}`,
       );
       rows.push(...page.items);
       offset += page.items.length;
-      if (offset >= page.total) return rows;
+      if (offset >= page.total || (offset >= maximum && maximum < 10000))
+        return [...new Map(rows.map(row => [row.id, row])).values()];
       if (!page.items.length || offset >= 10000)
         throw Error(
-          "This view exceeds the demo limit. Narrow the shared queue before loading it.",
+          "This view exceeds the configured limit. Narrow the shared queue before loading it.",
         );
     }
   }
@@ -196,7 +206,7 @@ class Backend {
       result.push(
         ...(await this.request("/edits/admit", {
           method: "POST",
-          body: { edits: edits.slice(start, start + 100).map(admission) },
+          body: { edits: (await resolveAdmissionEdits(edits.slice(start, start + 100))).map(admission) },
         })),
       );
     return result;
@@ -224,21 +234,11 @@ class Backend {
       },
     });
   }
-  async auditExport() {
-    const rows: string[][] = [];
-    let after = 0;
-    for (;;) {
-      const csv = await this.request(
-        `/audit/export?after_id=${after}&limit=1000`,
-      );
-      const parsed = parseCSV(csv);
-      if (!rows.length) rows.push(parsed[0]);
-      const data = parsed.slice(1);
-      rows.push(...data);
-      if (data.length < 1000) return rows;
-      after = Number(data.at(-1)![0]);
-    }
+  async auditExport(ids: string[]) {
+    if (!ids.length) return [["id", "time", "actor_id", "action", "target", "detail"]];
+    return parseCSV(await this.request(`/audit/export?limit=1000&ids=${encodeURIComponent(ids.slice(0,1000).join(","))}`));
   }
+
 }
 export const backend = new Backend();
 export function serverStore(rows: any[], members: any[], audit: any[]): Store {

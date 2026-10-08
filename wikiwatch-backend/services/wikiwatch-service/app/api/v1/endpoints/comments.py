@@ -2,13 +2,15 @@ from fastapi import APIRouter, Depends, Query
 
 from app.core.database import get_db
 from app.core.enums import Role
+from app.core.exceptions import AppError
+from app.core.settings import settings
 from app.dependencies import current_member
 from app.models import Thread
 from app.schemas.base import Page, SuccessResponse, VersionRequest
 from app.schemas.contracts import (
     CommentCreate,
-    CommentResponse,
     DeleteResponse,
+    ReplyResponse,
     ResolveRequest,
     ThreadCreate,
     ThreadResponse,
@@ -26,7 +28,7 @@ router = APIRouter(tags=["Diff comments"])
 async def threads(
     edit_id: str,
     offset: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(5, ge=1, le=5),
     actor=Depends(current_member),
     db=Depends(get_db),
 ):
@@ -35,6 +37,8 @@ async def threads(
     rows, total = await service.repo.page(
         Thread, [Thread.edit_id == edit_id, Thread.deleted.is_(False)], offset, limit
     )
+    if total > settings.threads_per_edit:
+        raise AppError(409, "Retained discussions exceed the edit limit. Export or maintain the history before loading it.")
     return {
         "data": {
             "items": [await service.response(row) for row in rows],
@@ -60,7 +64,7 @@ async def create(
 
 @router.post(
     "/threads/{thread_id}/comments",
-    response_model=SuccessResponse[CommentResponse],
+    response_model=SuccessResponse[ReplyResponse],
     status_code=201,
     summary="Reply to an open thread",
 )
