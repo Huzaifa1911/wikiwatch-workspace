@@ -1,0 +1,58 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> patrol-desk-mocks@1.0.0 test
+> node --import tsx --test tests/*.test.tsx
+
+✔ Review route: claim, computed diff, line comment persists, mark OK, My Claims has no states column (2650.399973ms)
+✔ Nested formatted text selection stores a text anchor and restores its inline thread (2721.825732ms)
+✔ Lead returns flag with reason, patroller resubmits, lead verifies, board and audit agree (4124.81745ms)
+✔ Long diff virtualizes rows; search and comments reach offscreen lines (1095.961648ms)
+✔ Team lead: assign and reassign, workload counts update, feed has no inspection actions (3069.616941ms)
+✔ Admin: add member with validation, manage access, audit export, activity chart/table/filter (2204.887908ms)
+✔ Role/conflict rules and text-only hostile diff rendering (494.148374ms)
+✔ Changed pages collapse and viewed progress persist without losing file-local comments (2837.1327ms)
+✔ Board drop validation, required feedback, reopen, release and draggable column order (1794.611408ms)
+✔ Wiki tree, default expanded files, compact threads and advance focus after hide/viewed (1756.363328ms)
+✔ Comment actions are secondary, reply can cancel, deletion confirms, pending work is distinct (1443.947354ms)
+✔ Selection menu supports keyboard, Escape and leaves ordinary right-click untouched (557.993985ms)
+✔ Single-edit inspection does not add unrelated pages (437.374641ms)
+✔ Split replacements align old and new lines and source anchors remain exact (1.280343ms)
+✔ Activity survives feed eviction and audit records revision identity (3.575016ms)
+✔ Wiki adapter reads a captured live SSE event; rejects canaries and log events (0.901956ms)
+✔ Wiki adapter fetches exact source pair, handles new pages and hidden content (1.443723ms)
+✔ Real-data mode loads revision source, comments persist on refresh, team claims stay local (1218.327893ms)
+✔ Fast feed holds rows, counts arrivals beyond retention and loads new rows on demand (696.851229ms)
+✔ Follow live uses a three-second schedule and holds during row interaction or older-page browsing (1172.789847ms)
+✔ Charts use Recharts and role tables use AG Grid (1484.123918ms)
+✔ Context starts enabled and search reveals unchanged lines without disabling it (894.550615ms)
+✔ Board holds arrivals while claim ownership updates immediately and released work returns (112.198127ms)
+✔ Grid filters the whole queue and retains filters and column choices across live refreshes (1375.976198ms)
+✔ Board following batches arrivals and stops while a lead interacts (122.052679ms)
+✔ Number filters and sorting use numeric values across all queue pages (1419.268107ms)
+✔ Diff search scrolls the review pane without scrolling the document (517.588963ms)
+✔ Startup and gap intervals retain observed edits and chart bars (109.270737ms)
+An update to LiveData inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+✔ Dev mode is isolated and actual stream reconnect and browser network lifecycle work (253.907485ms)
+✔ Grid selection stays checked, is duplicate-safe, and select all targets the filtered sorted current page (3463.261115ms)
+✔ WikiWatch puts batch review in the feed header with keyboard-accessible help (550.126251ms)
+✔ Demo login validates credentials, restores the session, signs out and guards role routes (1156.539509ms)
+✔ Route policy allows only the signed-in role and ignores URL account impersonation (1.710174ms)
+✔ Inactive accounts cannot sign in and removing current access returns to login (595.7567ms)
+✔ Compact navigation opens allowed pages and exposes guide and developer tools (879.408948ms)
+ℹ tests 35
+ℹ suites 0
+ℹ pass 35
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 42524.238749

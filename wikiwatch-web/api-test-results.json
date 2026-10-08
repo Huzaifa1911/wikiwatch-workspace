@@ -1,0 +1,18 @@
+{
+  "checks": [
+    "Real login, admission, source diff and claim",
+    "Token refresh and persisted comments after reload",
+    "Reply, resolve and reopen use real thread versions",
+    "Lead return and second reviewer decision synchronize across accounts",
+    "Cross-role URL is denied",
+    "Admin creates a real member with an initial password",
+    "Admin charts, audit records and backend CSV export",
+    "Connected layout and navigation fit phone, tablet and desktop",
+    "PWA reload retains cached diff and threads with offline writes blocked",
+    "API restart preserves review and session in database",
+    "Invalid refresh credentials return to login"
+  ],
+  "runtimeErrors": [],
+  "database": "SQLite",
+  "wikimedia": "deterministic source fixtures; backend APIs are real"
+}

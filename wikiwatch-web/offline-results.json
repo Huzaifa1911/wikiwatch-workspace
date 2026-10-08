@@ -1,0 +1,26 @@
+[
+  {
+    "path": "/repo/index.html",
+    "scope": "http://127.0.0.1:33897/repo/",
+    "offlineReload": true,
+    "offlineNewTab": true,
+    "roleNavigation": true,
+    "onlineRecovery": true,
+    "apiCacheEntries": 0,
+    "waitingUpdate": true,
+    "oldCacheRemoved": true,
+    "otherCachesPreserved": true
+  },
+  {
+    "path": "/index.html",
+    "scope": "http://127.0.0.1:33897/",
+    "offlineReload": true,
+    "offlineNewTab": true,
+    "roleNavigation": true,
+    "onlineRecovery": true,
+    "apiCacheEntries": 0,
+    "waitingUpdate": true,
+    "oldCacheRemoved": true,
+    "otherCachesPreserved": true
+  }
+]

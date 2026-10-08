@@ -1,0 +1,10 @@
+✔ Demo login validates credentials, restores the session, signs out and guards role routes (1710.819082ms)
+✔ Route policy allows only the signed-in role and ignores URL account impersonation (1.934933ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3037.710279

@@ -1,0 +1,7 @@
+import {readRoute,workspaceHash,type Role} from './routes';
+import type {Member} from './model';
+export const SESSION_KEY='wikiwatch-demo-session';
+export const DEMO_PASSWORD='demo123';
+export const roleTabs:Record<Role,string[]>={patroller:['Live feed','My Claims'],lead:['Claim Board','Workload','Live feed'],admin:['Edit Activity','Members','Audit Log']};
+export function sessionId(){try{return window.sessionStorage.getItem(SESSION_KEY)}catch{return null}}
+export function guardedRoute(account:Member,hash=window.location.hash):{route:ReturnType<typeof readRoute>,hash:string,denied:boolean}{let r:ReturnType<typeof readRoute>;try{r=readRoute(hash)}catch{return {...guardedRoute(account,''),denied:true}}const path=hash.replace(/^#\/?/,'').split('?')[0];const validPath=r.reviewId?path.startsWith('review/'):path===workspaceHash(account.role,r.tab,account.id).replace(/^#\/?/,'').split('?')[0];const allowed=validPath&&r.role===account.role&&roleTabs[account.role].includes(r.tab)&&(!r.reviewId||account.role!=='admin');if(!allowed)return {route:{...r,role:account.role,user:account.id,tab:roleTabs[account.role][0],reviewId:null,wiki:null},hash:workspaceHash(account.role,roleTabs[account.role][0],account.id),denied:!!hash&&hash!=='#/login'};const [base,query='']=hash.split('?');const params=new URLSearchParams(query);params.set('user',account.id);return {route:{...r,role:account.role,user:account.id},hash:base+'?'+params.toString(),denied:false};}

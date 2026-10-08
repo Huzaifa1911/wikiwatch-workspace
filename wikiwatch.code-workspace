@@ -1,0 +1,13 @@
+{
+  "folders": [
+    {
+      "name": "wikiwatch-web",
+      "path": "wikiwatch-web",
+    },
+    {
+      "name": "wikiwatch-backend",
+      "path": "wikiwatch-backend/services/wikiwatch-service",
+    },
+  ],
+  "settings": {},
+}

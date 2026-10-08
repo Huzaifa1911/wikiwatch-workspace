@@ -1,0 +1,12 @@
+✔ Changed pages collapse and viewed progress persist without losing file-local comments (4005.071058ms)
+✔ Fast feed holds rows, counts arrivals beyond retention and loads new rows on demand (757.264707ms)
+✔ Charts use Recharts and role tables use AG Grid (1450.38978ms)
+✔ Grid selection stays checked, is duplicate-safe, and select all targets the filtered sorted current page (3595.398905ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11452.066987

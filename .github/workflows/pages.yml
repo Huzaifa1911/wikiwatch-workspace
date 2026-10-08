@@ -1,0 +1,47 @@
+name: Deploy WikiWatch to GitHub Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: wikiwatch-web
+    env:
+      WIKIWATCH_API_HOST: ${{ vars.WIKIWATCH_API_HOST }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: wikiwatch-web/package-lock.json
+      - name: Require an HTTPS backend host
+        run: node -e "if (!process.env.WIKIWATCH_API_HOST?.startsWith('https://')) throw Error('Set repository variable WIKIWATCH_API_HOST to your HTTPS API origin')"
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: wikiwatch-web/dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

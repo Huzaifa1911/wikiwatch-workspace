@@ -1,0 +1,14 @@
+{
+  "manifestErrors": [],
+  "installabilityErrors": [],
+  "manifest": {
+    "name": "WikiWatch",
+    "start_url": "http://127.0.0.1:41009/index.html#/login",
+    "scope": "http://127.0.0.1:41009/",
+    "display": "standalone",
+    "iconSizes": [
+      "192x192",
+      "512x512"
+    ]
+  }
+}

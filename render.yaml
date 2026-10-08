@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: wikiwatch-api
+    runtime: docker
+    plan: free
+    rootDir: wikiwatch-backend/services/wikiwatch-service
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /wikiwatch-service/v1/health
+    envVars:
+      - key: WIKIWATCH_DATABASE_URL
+        sync: false
+      - key: WIKIWATCH_CORS_ALLOW_ORIGINS
+        sync: false
+      - key: WIKIWATCH_BOOTSTRAP_EMAIL
+        sync: false
+      - key: WIKIWATCH_BOOTSTRAP_PASSWORD
+        sync: false
+      - key: WIKIWATCH_SEED_ON_DEPLOY
+        value: "true"
+      - key: WIKIWATCH_SEED_DEMO
+        value: "false"

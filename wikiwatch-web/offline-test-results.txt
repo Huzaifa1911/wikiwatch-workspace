@@ -1,0 +1,1 @@
+PASS: root and GitHub Pages project scopes, offline reload/new tab, role navigation, online recovery and app-shell-only caching.

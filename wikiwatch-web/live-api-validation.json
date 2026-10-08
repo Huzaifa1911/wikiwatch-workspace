@@ -1,0 +1,43 @@
+[
+  {
+    "check": "English recent article edits",
+    "result": "PASS",
+    "url": "https://en.wikipedia.org/w/api.php?action=query&list=recentchanges&rctype=edit&rcnamespace=0&format=json&origin=*",
+    "details": "Returned recent edit metadata including old/new revision IDs used by the source-pair check."
+  },
+  {
+    "check": "Exact English revision pair",
+    "url": "https://en.wikipedia.org/w/api.php?format=json&formatversion=2&origin=%2A&action=query&prop=revisions&revids=1348526468%7C1379184309&rvprop=ids%7Ccontent%7Ccontentmodel%7Csha1&rvslots=main",
+    "result": "PASS",
+    "checkedAt": "2026-10-08T11:56:53Z"
+  },
+  {
+    "check": "Compare metadata",
+    "url": "https://en.wikipedia.org/w/api.php?format=json&formatversion=2&origin=%2A&action=compare&fromrev=1348526468&torev=1379184309&prop=ids%7Ctitle%7Cdiffsize",
+    "result": "PASS",
+    "checkedAt": "2026-10-08T11:57:04Z"
+  },
+  {
+    "check": "ar recent articles",
+    "url": "https://ar.wikipedia.org/w/api.php?format=json&formatversion=2&origin=%2A&action=query&list=recentchanges&rctype=edit%7Cnew&rcnamespace=0&rcprop=title%7Cids%7Ctimestamp%7Csizes%7Cuser%7Ccomment%7Cflags&rclimit=1",
+    "result": "PASS",
+    "checkedAt": "2026-10-08T11:57:18Z"
+  },
+  {
+    "check": "ja recent articles",
+    "url": "https://ja.wikipedia.org/w/api.php?format=json&formatversion=2&origin=%2A&action=query&list=recentchanges&rctype=edit%7Cnew&rcnamespace=0&rcprop=title%7Cids%7Ctimestamp%7Csizes%7Cuser%7Ccomment%7Cflags&rclimit=1",
+    "result": "PASS",
+    "checkedAt": "2026-10-08T11:57:29Z"
+  },
+  {
+    "check": "Anonymous CORS / Api-User-Agent preflight",
+    "result": "PASS",
+    "details": "HTTP 200; Allow-Origin *; Allow-Headers api-user-agent; Allow-Methods GET, HEAD, POST"
+  },
+  {
+    "check": "Recentchange SSE and CORS",
+    "result": "PASS",
+    "details": "HTTP 200; text/event-stream; Allow-Origin *; 176 complete events captured during a 10-second bounded read.",
+    "url": "https://stream.wikimedia.org/v2/stream/recentchange"
+  }
+]

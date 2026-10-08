@@ -1,0 +1,2 @@
+Swagger UI Dist 5.33.1, https://github.com/swagger-api/swagger-ui
+Apache-2.0. Unmodified distribution files.

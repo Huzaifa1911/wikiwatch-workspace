@@ -1,0 +1,38 @@
+{
+  "$schema": "/mediawiki/recentchange/1.0.0",
+  "meta": {
+    "uri": "https://en.wikipedia.org/wiki/Eiffel_65_discography",
+    "request_id": "a2280757-e6be-41f1-99bb-610dc0e5644b",
+    "id": "ab6949e4-0839-4712-82a5-bd04b1c43046",
+    "domain": "en.wikipedia.org",
+    "stream": "mediawiki.recentchange",
+    "dt": "2026-10-08T11:56:46.872Z",
+    "topic": "eqiad.mediawiki.recentchange",
+    "partition": 0,
+    "offset": 6593771572
+  },
+  "id": 2077696978,
+  "type": "edit",
+  "namespace": 0,
+  "title": "Eiffel 65 discography",
+  "title_url": "https://en.wikipedia.org/wiki/Eiffel_65_discography",
+  "comment": "",
+  "timestamp": 1791460605,
+  "user": "LuanCampSouza93",
+  "bot": false,
+  "notify_url": "https://en.wikipedia.org/w/index.php?diff=1379184427&oldid=1374592011",
+  "minor": false,
+  "length": {
+    "old": 15718,
+    "new": 15744
+  },
+  "revision": {
+    "old": 1374592011,
+    "new": 1379184427
+  },
+  "server_url": "https://en.wikipedia.org",
+  "server_name": "en.wikipedia.org",
+  "server_script_path": "/w",
+  "wiki": "enwiki",
+  "parsedcomment": ""
+}

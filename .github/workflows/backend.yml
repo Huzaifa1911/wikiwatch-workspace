@@ -1,0 +1,37 @@
+name: WikiWatch API checks
+on:
+  push:
+  pull_request:
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: wikiwatch
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: wikiwatch_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wikiwatch"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: wikiwatch-backend/services/wikiwatch-service
+    env:
+      WIKIWATCH_DATABASE_URL: postgresql+asyncpg://wikiwatch:ci-only-password@localhost:5432/wikiwatch_test
+      TEST_DATABASE_URL: postgresql+asyncpg://wikiwatch:ci-only-password@localhost:5432/wikiwatch_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install uv
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run alembic upgrade head
+      - run: uv run alembic check
+      - run: uv run pytest -q
