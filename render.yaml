@@ -10,6 +10,7 @@ services:
     envVars:
       - key: WIKIWATCH_DATABASE_URL
         sync: false
+      # JSON array containing the deployed frontend origin.
       - key: WIKIWATCH_CORS_ALLOW_ORIGINS
         sync: false
       - key: WIKIWATCH_BOOTSTRAP_EMAIL
@@ -20,3 +21,14 @@ services:
         value: "true"
       - key: WIKIWATCH_SEED_DEMO
         value: "false"
+
+  - type: web
+    name: wikiwatch-web
+    runtime: static
+    rootDir: wikiwatch-web
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      # Public backend origin, e.g. https://YOUR-API.onrender.com (no API path).
+      - key: WIKIWATCH_API_HOST
+        sync: false

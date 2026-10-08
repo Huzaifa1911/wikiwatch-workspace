@@ -1,6 +1,10 @@
 {
   "folders": [
     {
+      "name": "wikiwatch-workspace(root)",
+      "path": ".",
+    },
+    {
       "name": "wikiwatch-web",
       "path": "wikiwatch-web",
     },
