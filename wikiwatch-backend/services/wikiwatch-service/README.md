@@ -8,9 +8,7 @@ See the workspace README for current local and deployment instructions.
 
 # wikiwatch-service
 
-Run commands from this folder. See [the project README](../../README.md) for setup,
-[API operations](../../docs/API.md), [frontend integration](../../docs/FRONTEND.md),
-and [deployment](../../docs/DEPLOYMENT.md).
+Run commands from this folder. See [the project README](../../README.md) for setup
 
 Swagger: `/wikiwatch-service/v1/swagger`.
 All implemented application routes use `/wikiwatch-service/v1`.
