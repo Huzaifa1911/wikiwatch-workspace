@@ -3,9 +3,6 @@
 This is the instructor-provided backend for the frontend assignment.
 Trainees use the APIs. They do not build this service.
 
-Python, FastAPI, async SQLAlchemy and Alembic follow the supplied [IAM service structure](https://github.com/Huzaifa1911/smart-hire/tree/main/services/iam-service).
-The reference contains contract-only IAM handlers. WikiWatch implements its handlers and database writes.
-
 ## Code layout
 
 | Folder | Purpose |
